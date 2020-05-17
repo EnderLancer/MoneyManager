@@ -316,6 +316,9 @@ class Main(tk.Frame):
         self.status['text'] = self.controller.user.getCurrentWallet()["access_level"]
         self.walletNameLabel['text'] = self.controller.user.getCurrentWallet()["name"]
         self.controller.user.updateRecords()
+        self.displayRecords()
+
+    def displayRecords(self):
         [self.tree.delete(i) for i in self.tree.get_children()]
         volumeSum = 0
         for row in self.controller.user.getCurrentWallet()["records"]:
