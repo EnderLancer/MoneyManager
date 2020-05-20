@@ -4,7 +4,11 @@ import tkinter as Tk
 from urllib import request, parse
 import json
 import hashlib
+import calendar
 import datetime as datetime
+from matplotlib import pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 import webbrowser
 
 SITE_URL = "https://kursova-shadey.000webhostapp.com"
@@ -44,7 +48,7 @@ class App(tk.Tk):
 
         self.frames = {}
         self.defines = self.user.getDefinitions()
-        for F in (AuthorizationPage, WalletsPage, CreateWalletPage, Main):
+        for F in (AuthorizationPage, WalletsPage, CreateWalletPage, Main, AnalysisPage):
 
             frame = F(self.container, self)
 
@@ -64,6 +68,8 @@ class App(tk.Tk):
                 self.after(1, frame.showWallets)
         elif cont == Main:
             self.after(1, frame.view_records)
+        elif cont == AnalysisPage:
+            self.after(1, frame.init_analysis)
         frame.tkraise()
 
 
@@ -115,10 +121,10 @@ class AuthorizationPage(tk.Frame):
         authFrame.place(anchor="c", relx=.5, rely=.5)
 
 
+
 class WalletsPage(tk.Frame):
     def __init__(self, parent, controller):
         tk.Frame.__init__(self, parent)
-        self.me = self
         self.controller = controller
         self.user = controller.user
         self.allWallets = tk.Frame(self)
@@ -205,6 +211,8 @@ class CreateWalletPage(tk.Frame):
 
         createFrame.place(anchor="c", relx=.5, rely=.5)
 
+
+
 class Main(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
@@ -256,7 +264,7 @@ class Main(tk.Frame):
         ttk.Separator(toolbar).pack(side="right", fill="y", padx=2)
         self.analysis_img = tk.PhotoImage(file=PATH_IMG+'analysis.png')
         btn_analysis = tk.Button(toolbar, text='Анализ кошелька', bg='#d7d8e0', bd=0, image=self.analysis_img,
-                               compound=tk.TOP, command=self.sharePermission)
+                               compound=tk.TOP, command=lambda: self.controller.show_frame(AnalysisPage))
         btn_analysis.pack(side=tk.RIGHT)
 
         treeColumns = {'id': "ID",
@@ -286,6 +294,7 @@ class Main(tk.Frame):
         self.balance.pack(side=tk.LEFT)
         self.balance_currency = tk.Label(self.balaneBar, text='')
         self.balance_currency.pack(side=tk.LEFT)
+        ttk.Separator(self.balaneBar).pack(side="left", fill="y", padx=2)
         self.status = tk.Label(self.balaneBar, text='')
         self.status.pack(side=tk.RIGHT)
         self.walletNameLabel = ttk.Label(self.balaneBar, text=self.controller.user)
@@ -344,6 +353,121 @@ class Main(tk.Frame):
     def open_update_dialog(self):
         values = self.tree.set(self.tree.selection()[0])
         Update(self.controller, values, self)
+
+
+
+class AnalysisPage(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.records = []
+        self.pieFrame = ttk.Frame(self)
+        self.pieFigure = plt.figure(figsize = (4,4))
+        self.canvas = FigureCanvasTkAgg(self.pieFigure, self.pieFrame)
+        self.calendarMenu = ttk.Frame(self)
+        self.btn_back = tk.Button(self, text='<-- Назад',
+                                 command=lambda: self.controller.show_frame(Main))
+        self.btn_back.place(anchor="nw")
+        self.chooseDate = datetime.datetime.today()
+        self.calendar = CalendarFrame(self.calendarMenu, date=self.chooseDate.strftime("%d/%m/%Y"),
+                                      dateformat="%d/%m/%Y",command=lambda date: self.updateStat(date))
+        self.calendar.pack(side=tk.LEFT)
+        self.calendarMenu.place(anchor="sw", rely=1.)
+        MODES = [
+            ("Всё время", "a"),
+            ("Год", "y"),
+            ("Месяц", "ym"),
+            ("День", "ymd"),
+        ]
+
+        self.periodSelect = tk.StringVar()
+        self.periodSelect.set("a") # initialize
+        periodFrame = tk.Frame(self)
+        for text, mode in MODES:
+            b = tk.Radiobutton(periodFrame, text=text,
+                            variable=self.periodSelect, value=mode, indicatoron=0)
+            b.pack(anchor='e')
+        periodFrame.place(anchor='e', relx=1., rely=.5)
+
+        def change_dropdown(*args):
+            self.updateStat(self.chooseDate.strftime("%d/%m/%Y"))
+
+
+        self.periodSelect.trace('w', change_dropdown)
+
+    def init_analysis(self):
+        if "records" in self.controller.user.getCurrentWallet():
+            self.records = self.controller.user.getCurrentWallet()["records"]
+            for record in self.records:
+                record["datetime"] = datetime.datetime.strptime(record["datetime"], "%Y-%m-%d %H:%M:%S")
+        self.updateStat(self.chooseDate.strftime("%d/%m/%Y"))
+
+    def updateStat(self, dateChoose):
+        self.records = self.controller.user.getCurrentWallet()["records"]
+        self.chooseDate = datetime.datetime.strptime(dateChoose, "%d/%m/%Y")
+        selectYear = self.chooseDate.year
+        selectMonth = self.chooseDate.month
+        selectDay = self.chooseDate.day
+        if "d" in self.periodSelect.get():
+            self.records = [record for record in self.records if record["datetime"].day == selectDay]
+        if "m" in self.periodSelect.get():
+            self.records = [record for record in self.records if record["datetime"].month == selectMonth]
+        if "y" in self.periodSelect.get():
+            self.records = [record for record in self.records if record["datetime"].year == selectYear]
+        self.updatePie()
+
+    def updatePie(self):
+        self.pieFrame.pack_forget()
+        self.canvas.get_tk_widget().pack_forget()
+        self.pieFigure.clear()
+        self.pieFigure.suptitle("Круговая диаграмма", fontsize = 14)
+        volumes  = {}
+        for record in self.records:
+            if record["action"] in volumes:
+                volumes[record["action"]] += float(record["volume"])
+            else:
+                volumes[record["action"]] = float(record["volume"])
+        lebelsWithVolume = [str(key)+"\n({})".format(volumes[key]) for key in list(volumes.keys())]
+        self.pie = plt.pie(list(volumes.values()), labels=lebelsWithVolume, shadow=True, autopct='%1.1f%%')
+
+        self.canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.draw()
+        self.pieFrame.place(anchor="c", relx=.5, rely=.5)
+
+
+
+class CalendarFrame(tk.Frame): # class calendarTk
+    """ Calendar, the current date is exposed today, or transferred to date"""
+    def __init__(self,master=None,date=None,dateformat="%d/%m/%Y",command=lambda i:None):
+        tk.Frame.__init__(self, master)
+        self.dt=datetime.datetime.now() if date is None else datetime.datetime.strptime(date, dateformat)
+        self.showmonth()
+        self.command=command
+        self.dateformat=dateformat
+    def showmonth(self): # Show the calendar for a month
+        sc = calendar.month(self.dt.year, self.dt.month).split('\n')
+        for t,c in [('<<',0),('<',1),('>',5),('>>',6)]: # The buttons to the left to the right year and month
+            tk.Button(self,text=t,relief='flat',command=lambda i=t:self.callback(i)).grid(row=0,column=c)
+        tk.Label(self,text=sc[0]).grid(row=0,column=2,columnspan=3) # year and month
+        for line,lineT in [(i,sc[i+1]) for i in range(1,len(sc)-1)]: # The calendar
+            for col,colT in [(i,lineT[i*3:(i+1)*3-1]) for i in range(7)]: # For each element
+                obj=tk.Button if colT.strip().isdigit() else tk.Label # If this number is a button, or Label
+                args={'command':lambda i=colT:self.callback(i)} if obj==tk.Button else {} # If this button, then fasten it to the command
+                bg='green' if colT.strip()==str(self.dt.day) else 'SystemButtonFace' # If the date coincides with the day of date - make him a green background
+                fg='red' if col>=5 else 'SystemButtonText' # For the past two days, the color red
+                obj(self,text="%s"% colT,relief='flat',bg=bg,fg=fg,**args).grid(row=line, column=col, ipadx=2, sticky='nwse') # Draw Button or Label
+
+    def callback(self,but): # Event on the button
+        if but.strip().isdigit():  self.dt=self.dt.replace(day=int(but)) # If you clicked on a date - the date change
+        elif but in ['<','>','<<','>>']:
+            day=self.dt.day
+            if but in['<','>']: self.dt=self.dt+datetime.timedelta(days=30 if but=='>' else -30) # Move a month in advance / rewind
+            if but in['<<','>>']: self.dt=self.dt+datetime.timedelta(days=365 if but=='>>' else -365) #  Year forward / backward
+            try: self.dt=self.dt.replace(day=day) # We are trying to put the date on which stood
+            except: pass                          # It is not always possible
+        self.showmonth() # Then always show calendar again
+        if but.strip().isdigit(): self.command(self.dt.strftime(self.dateformat)) # If it was a date, then call the command
+
 
 
 
@@ -522,10 +646,10 @@ class User:
                 reqValues["pass"] = self.passMD5
             reqAddiction = parse.urlencode(reqValues, encoding='utf-8')
             sendURL = REQUEST_URL + requestURL + reqAddiction
-            print(requestURL + reqAddiction)
+#            print(requestURL + reqAddiction)
             req = request.Request(sendURL)
             answer = request.urlopen(req).read().decode("utf-8")
-            print('req answer', answer)
+#            print('req answer', answer)
             return answer
 
         except Exception as e:
